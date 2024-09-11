@@ -25,11 +25,6 @@ void handle_client(int csock) {
         }
         printf("받은 데이터 (PID: %d): %s", pid, mesg);
 
-        if (write(csock, mesg, n) < 0) {
-            perror("write()");
-            break;
-        }
-
         if (strncmp(mesg, "quit", 4) == 0) {
             printf("클라이언트가 종료를 요청했습니다. (PID: %d)\n", pid);
             break;

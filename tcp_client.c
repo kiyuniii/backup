@@ -34,26 +34,20 @@ int main(int argc, char **argv) {
 
     printf("서버에 연결되었습니다. 메시지를 입력하세요 ('quit'으로 종료):\n");
 
-    while (1) {
-        fgets(mesg, BUFSIZ, stdin);
+while (1) {
+    printf("메시지를 입력하세요 ('quit'으로 종료): ");
+    fgets(mesg, BUFSIZ, stdin);
 
-        if (send(sock, mesg, strlen(mesg), 0) <= 0) {
-            perror("send()");
-            break;
-        }
-
-        if (strncmp(mesg, "quit", 4) == 0) {
-            printf("서버와의 연결을 종료합니다.\n");
-            break;
-        }
-
-        memset(mesg, 0, BUFSIZ);
-        if (recv(sock, mesg, BUFSIZ, 0) <= 0) {
-            perror("recv()");
-            break;
-        }
-        printf("서버로부터 받은 데이터: %s", mesg);
+    if (send(sock, mesg, strlen(mesg), 0) <= 0) {
+        perror("send()");
+        break;
     }
+
+    if (strncmp(mesg, "quit", 4) == 0) {
+        printf("서버와의 연결을 종료합니다.\n");
+        break;
+    }
+}
 
     close(sock);
     return 0;
