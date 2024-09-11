@@ -21,6 +21,12 @@ pid_t client_pids[MAX_CLIENTS];  // 클라이언트 프로세스 ID 배열
 int parent_to_child[MAX_CLIENTS][2];  // 부모에서 자식으로의 파이프
 int child_to_parent[MAX_CLIENTS][2];  // 자식에서 부모로의 파이프
 
+struct message {
+    pid_t pid;
+    char mesg[BUFSIZ];
+};
+
+
 /* 파이프 : 논블로킹 모드로 설정 */
 // 파일 디스크립터를 논블로킹 모드로 설정하는 함수
 void set_nonblocking(int fd) {
@@ -45,13 +51,14 @@ void handle_client(int csock, int client_index) {
     // 이 함수는 서버가 클라이언트와 성공적으로 연결을 수립한 후 호출됩니다.
     // csock: 클라이언트와 연결된 소켓 디스크립터
     // client_index: 클라이언트의 고유 인덱스
-    char mesg[BUFSIZ];
+
+    struct message msg;
     int n;
     pid_t pid = getpid();  // 현재 프로세스의 PID 얻기
 
     while (1) {
-        memset(mesg, 0, BUFSIZ);  // 메시지 버퍼 초기화
-        n = read(csock, mesg, BUFSIZ);  // 클라이언트로부터 메시지 읽기
+        memset(msg.mesg, 0, BUFSIZ);  // 메시지 버퍼 초기화
+        n = read(csock, msg.mesg, BUFSIZ);  // 클라이언트로부터 메시지 읽기
         // n의 값은 다음과 같은 의미를 가집니다:
         // 현재 코드에서는 클라이언트로부터 읽은 데이터를 부모 프로세스로 전달하지 않습니다.
         // 만약 부모 프로세스로 데이터를 전달하려면 파이프를 사용하여 추가적인 코드가 필요합니다.
@@ -65,7 +72,7 @@ void handle_client(int csock, int client_index) {
             printf("클라이언트 연결 종료 (PID: %d)\n", pid);
             break;
         }
-        printf("받은 데이터 (PID: %d): %s", pid, mesg);  // 받은 메시지 출력
+        printf("받은 데이터 (PID: %d): %s", pid, msg.mesg);  // 받은 메시지 출력
 
         // 부모 프로세스에게 메시지 전달
         // 이 부분은 중복되는 것 같습니다. 클라이언트로부터 직접 읽은 메시지를
@@ -73,7 +80,7 @@ void handle_client(int csock, int client_index) {
         // 만약 부모 프로세스가 이 정보를 필요로 한다면, 다른 방식으로 구현해야 할 것 같습니다.
 
         // 부모 프로세스에게 메시지 전달
-        ssize_t bytes_written = write(child_to_parent[client_index][1], mesg, strlen(mesg));
+        ssize_t bytes_written = write(child_to_parent[client_index][1], &msg, sizeof(msg));
         if (bytes_written == -1) {
             perror("부모 프로세스로 데이터 전송 실패");
         } else {
@@ -82,7 +89,7 @@ void handle_client(int csock, int client_index) {
 
 
         // 클라이언트가 'quit' 메시지를 보냈는지 확인
-        if (strncmp(mesg, "quit", 4) == 0) {
+        if (strncmp(msg.mesg, "quit", 4) == 0) {
             printf("클라이언트가 종료를 요청했습니다. (PID: %d)\n", pid);
             break;
         }
@@ -102,11 +109,16 @@ void handle_sigint(int sig) {
 void handle_sigchld(int sig) {
     pid_t pid;
     int status;
+    // waitpid 함수를 사용하여 종료된 자식 프로세스의 PID를 얻습니다.
+    // -1: 아무 자식 프로세스나 기다립니다.
+    // &status: 자식 프로세스의 종료 상태를 저장합니다.
+    // WNOHANG: 종료된 자식이 없으면 즉시 반환합니다.
     while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
         // 종료된 자식 프로세스 찾기
         for (int i = 0; i < client_count; i++) {
+            // client_pids 배열에 저장된 PID와 종료된 프로세스의 PID를 비교합니다.
             if (client_pids[i] == pid) {
-                // 자식 프로세스가 종료되었을 때 해당 클라이언트의 연결 종료
+                // 일치하는 PID를 찾으면, 해당 클라이언트의 연결을 종료합니다.
                 close(parent_to_child[i][0]);
                 close(parent_to_child[i][1]);
                 close(child_to_parent[i][0]);
@@ -176,13 +188,12 @@ int main(int argc, char **argv) {
     while (1) {
         // 자식 프로세스로부터 데이터 읽기
     for (int i = 0; i < client_count; i++) {
-        char buffer[BUFSIZ];
+        struct message msg;
         ssize_t bytes_read;
         
-        memset(buffer, 0, BUFSIZ);
-        bytes_read = read(child_to_parent[i][0], buffer, BUFSIZ);
+        bytes_read = read(child_to_parent[i][0], &msg, sizeof(struct message));
         if (bytes_read > 0) {
-            printf("자식 프로세스 %d로부터 받은 데이터: %s", client_pids[i], buffer);
+            printf("자식 프로세스 %d (PID: %d)로부터 받은 데이터: %s", i, msg.pid, msg.mesg);
         } else if (bytes_read == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
             // 데이터가 없음, 계속 진행
         } else if (bytes_read == -1) {
