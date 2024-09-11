@@ -9,18 +9,21 @@
 
 #define TCP_PORT 5100
 
+int ssock;  // 전역 변수로 선언
+
 void handle_client(int csock) {
     char mesg[BUFSIZ];
     int n;
+    pid_t pid = getpid();  // 현재 프로세스의 PID 얻기
 
     while (1) {
         memset(mesg, 0, BUFSIZ);
         n = read(csock, mesg, BUFSIZ);
         if (n <= 0) {
-            printf("클라이언트 연결 종료\n");
+            printf("클라이언트 연결 종료 (PID: %d)\n", pid);
             break;
         }
-        printf("받은 데이터: %s", mesg);
+        printf("받은 데이터 (PID: %d): %s", pid, mesg);
 
         if (write(csock, mesg, n) < 0) {
             perror("write()");
@@ -28,7 +31,7 @@ void handle_client(int csock) {
         }
 
         if (strncmp(mesg, "quit", 4) == 0) {
-            printf("클라이언트가 종료를 요청했습니다.\n");
+            printf("클라이언트가 종료를 요청했습니다. (PID: %d)\n", pid);
             break;
         }
     }
@@ -36,8 +39,14 @@ void handle_client(int csock) {
     exit(0);
 }
 
+void handle_sigint(int sig) {
+    printf("\n서버를 종료합니다...\n");
+    close(ssock);
+    exit(0);
+}
+
 int main(int argc, char **argv) {
-    int ssock, csock;
+    int csock;
     struct sockaddr_in servaddr, cliaddr;
     socklen_t clen;
 
@@ -61,7 +70,11 @@ int main(int argc, char **argv) {
         return -1;
     }
 
+    signal(SIGINT, handle_sigint);  // SIGINT 핸들러 등록
     signal(SIGCHLD, SIG_IGN);  // 좀비 프로세스 방지
+
+    printf("서버가 시작되었습니다. 포트 %d에서 대기 중...\n", TCP_PORT);
+    printf("서버를 종료하려면 Ctrl+C를 누르세요.\n");
 
     while (1) {
         clen = sizeof(cliaddr);
@@ -77,6 +90,7 @@ int main(int argc, char **argv) {
         pid_t pid = fork();
         if (pid == 0) {  // 자식 프로세스
             close(ssock);
+            printf("새로운 클라이언트 연결: %s (PID: %d)\n", inet_ntoa(cliaddr.sin_addr), getpid());
             handle_client(csock);
         } else if (pid > 0) {  // 부모 프로세스
             close(csock);
