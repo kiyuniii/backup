@@ -4,13 +4,34 @@
 #include <unistd.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
+#include <pthread.h>
 
 #define TCP_PORT 5101
+
+void *receive_messages(void *socket_desc) {
+    int sock = *(int*)socket_desc;
+    char server_message[BUFSIZ];
+    int read_size;
+
+    while ((read_size = recv(sock, server_message, BUFSIZ, 0)) > 0) {
+        server_message[read_size] = '\0';
+        printf("%s", server_message);
+    }
+
+    if (read_size == 0) {
+        puts("서버 연결 종료");
+    } else if (read_size == -1) {
+        perror("recv failed");
+    }
+
+    return 0;
+}
 
 int main(int argc, char **argv) {
     int sock;
     struct sockaddr_in servaddr;
     char mesg[BUFSIZ];
+    pthread_t receive_thread;
 
     if (argc < 2) {
         printf("사용법: %s [IP 주소]\n", argv[0]);
@@ -32,10 +53,14 @@ int main(int argc, char **argv) {
         return -1;
     }
 
+    if (pthread_create(&receive_thread, NULL, receive_messages, (void*)&sock) < 0) {
+        perror("pthread_create");
+        return -1;
+    }
+
     printf("서버에 연결되었습니다. 메시지를 입력하세요 ('quit'으로 종료):\n");
 
     while (1) {
-        printf(" >> ");
         fgets(mesg, BUFSIZ, stdin);
 
         if (send(sock, mesg, strlen(mesg), 0) <= 0) {
@@ -50,5 +75,6 @@ int main(int argc, char **argv) {
     }
 
     close(sock);
+    pthread_join(receive_thread, NULL);
     return 0;
 }

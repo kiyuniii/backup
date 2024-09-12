@@ -20,6 +20,7 @@ int client_count = 0;  // 현재 연결된 클라이언트 수
 pid_t client_pids[MAX_CLIENTS];  // 클라이언트 프로세스 ID 배열
 int parent_to_child[MAX_CLIENTS][2];  // 부모에서 자식으로의 파이프
 int child_to_parent[MAX_CLIENTS][2];  // 자식에서 부모로의 파이프
+int client_sockets[MAX_CLIENTS];  // 클라이언트 소켓 배열
 
 struct message {
     pid_t pid;
@@ -55,52 +56,44 @@ void handle_sigusr2(int sig) {
     printf("자식 프로세스가 클라이언트와 연결에 실패했습니다.\n");
 }
 
+// 브로드캐스트 함수 추가
+void broadcast_message(int sender_index, const char* message) {
+    for (int i = 0; i < client_count; i++) {
+        if (i != sender_index) {
+            write(parent_to_child[i][1], message, strlen(message));
+        }
+    }
+}
+
 // 클라이언트 처리 함수 [자식 프로세스 부분]
 void handle_client(int csock, int client_index) {
-    // 이 함수는 서버가 클라이언트와 성공적으로 연결을 수립한 후 호출됩니다.
-    // csock: 클라이언트와 연결된 소켓 디스크립터
-    // client_index: 클라이언트의 고유 인덱스
-
     struct message msg;
     int n;
     pid_t pid = getpid();  // 현재 프로세스의 PID 얻기
 
-    // 클라이언트와의 연결 성공 시 부모 프로세스에게 SIGUSR1 시그널 전송
     kill(getppid(), SIGUSR1);
 
     while (1) {
         memset(msg.mesg, 0, BUFSIZ);  // 메시지 버퍼 초기화
         n = read(csock, msg.mesg, BUFSIZ);  // 클라이언트로부터 메시지 읽기
-        // n의 값은 다음과 같은 의미를 가집니다:
-        // 현재 코드에서는 클라이언트로부터 읽은 데이터를 부모 프로세스로 전달하지 않습니다.
-        // 만약 부모 프로세스로 데이터를 전달하려면 파이프를 사용하여 추가적인 코드가 필요합니다.
-        // 양수: 실제로 읽은 바이트 수 (성공)
-        // 0: 파일의 끝에 도달 (EOF) 또는 연결이 정상적으로 닫힘
-        // -1: 오류 발생 (errno 변수를 통해 구체적인 오류 확인 가능)
+        
         if (n <= 0) {  // 연결 종료 확인
-            // 클라이언트 연결 종료는 read() 함수의 반환값으로 확인됩니다.
-            // SIGCHLD 시그널은 자식 프로세스가 종료될 때 발생하며, 
-            // 클라이언트 연결 종료와는 직접적인 관련이 없습니다.
             printf("클라이언트 연결 종료 (PID: %d)\n", pid);
             break;
         }
         printf("받은 데이터 (PID: %d): %s", pid, msg.mesg);  // 받은 메시지 출력
 
         // 부모 프로세스에게 메시지 전달
-        // 이 부분은 중복되는 것 같습니다. 클라이언트로부터 직접 읽은 메시지를
-        // 부모 프로세스에게 다시 전달하는 것은 불필요해 보입니다.
-        // 만약 부모 프로세스가 이 정보�� 필요로 한다면, 다른 방식으로 구현해야 할 것 같습니다.
+        msg.pid = pid;
+        write(child_to_parent[client_index][1], &msg, sizeof(msg));
 
-        // 부모 프로세스에게 메시지 전달
-        ssize_t bytes_written = write(child_to_parent[client_index][1], &msg, sizeof(msg));
-        if (bytes_written == -1) {
-            perror("부모 프로세스로 데이터 전송 실패");
-        } else {
-            printf("부모 프로세스로 %zd 바이트 전송됨\n", bytes_written);
+        // 부모로부터 브로드캐스트 메시지 수신
+        char broadcast_msg[BUFSIZ];
+        ssize_t bytes_read = read(parent_to_child[client_index][0], broadcast_msg, BUFSIZ);
+        if (bytes_read > 0) {
+            send(csock, broadcast_msg, bytes_read, 0);
         }
 
-
-        // 클라이언트가 'quit' 메시지를 보냈는지 확인
         if (strncmp(msg.mesg, "quit", 4) == 0) {
             printf("클라이언트가 종료를 요청했습니다. (PID: %d)\n", pid);
             break;
@@ -201,19 +194,24 @@ int main(int argc, char **argv) {
     // 클라이언트 연결 수락 루프
     while (1) {
         // 자식 프로세스로부터 데이터 읽기
-    for (int i = 0; i < client_count; i++) {
-        struct message msg;
-        ssize_t bytes_read;
-        
-        bytes_read = read(child_to_parent[i][0], &msg, sizeof(struct message));
-        if (bytes_read > 0) {
-            printf("자식 프로세스 %d (PID: %d)로부터 받은 데이터: %s", i, msg.pid, msg.mesg);
-        } else if (bytes_read == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-            // 데이터가 없음, 계속 진행
-        } else if (bytes_read == -1) {
-            perror("자식으로부터 읽기 오류");
+        for (int i = 0; i < client_count; i++) {
+            struct message msg;
+            ssize_t bytes_read;
+            
+            bytes_read = read(child_to_parent[i][0], &msg, sizeof(struct message));
+            if (bytes_read > 0) {
+                printf("자식 프로세스 %d (PID: %d)로부터 받은 데이터: %s", i, msg.pid, msg.mesg);
+                
+                // 브로드캐스트 메시지 생성 및 전송
+                char broadcast_msg[BUFSIZ + 50];
+                snprintf(broadcast_msg, sizeof(broadcast_msg), "클라이언트 %d: %s", i, msg.mesg);
+                broadcast_message(i, broadcast_msg);
+            } else if (bytes_read == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                // 데이터가 없음, 계속 진행
+            } else if (bytes_read == -1) {
+                perror("자식으로부터 읽기 오류");
+            }
         }
-    }
         clen = sizeof(cliaddr);
         csock = accept(ssock, (struct sockaddr *)&cliaddr, &clen);  //양수(3이상): 연결성공
         /* csock : 서버측의 소켓, 클라이언트와의 통신을 위한 소켓 */
@@ -247,7 +245,7 @@ int main(int argc, char **argv) {
         set_nonblocking(child_to_parent[client_count][0]);
         set_nonblocking(child_to_parent[client_count][1]);
         // 네, 맞습니다. 부모와 자식 프로세스 간의 파이프에서 읽기와 쓰기 모두를 논블로킹으로 설정해야
-        // 비동기식 데이터 처리가 가능합니다. 이렇게 하면 부모와 자식 프로세스가 서로 기다리지 않고
+        // 비동기식 데이터 처리가 가능합니다. 이��게 ���면 부모와 자식 프로세스가 서로 기다리지 않고
         // 독립적으로 작업을 수행할 수 있습니다.
 
         /* [자식 프로세스 부분] */
@@ -272,6 +270,7 @@ int main(int argc, char **argv) {
             close(csock);  // 부모 프로세스는 클라이언트 소켓을 사용하지 않으므로 닫습니다.
             close(parent_to_child[client_count][0]);  // 부모는 부모->자식 파이프의 읽기 끝을 닫습니다. 쓰기만 할 것이기 때문입니다.
             close(child_to_parent[client_count][1]);  // 부모는 자식->부모 파이프의 쓰기 끝을 닫습니다. 읽기만 할 것이기 때문입니다.
+            client_sockets[client_count] = csock;
             client_pids[client_count] = pid;
             client_count++;
         } else {
