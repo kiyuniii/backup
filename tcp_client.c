@@ -5,7 +5,7 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 
-#define TCP_PORT 5100
+#define TCP_PORT 5101
 
 int main(int argc, char **argv) {
     int sock;

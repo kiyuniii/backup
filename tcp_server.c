@@ -11,7 +11,7 @@
 #include <fcntl.h>
 #include <errno.h>
 // TCP 포트 번호와 최대 클라이언트 수 정의
-#define TCP_PORT 5100
+#define TCP_PORT 5101
 #define MAX_CLIENTS 10
 
 // 전역 변수 선언
@@ -46,6 +46,15 @@ void set_nonblocking(int fd) {
     }
 }
 
+// 시그널 핸들러 함수 추가
+void handle_sigusr1(int sig) {
+    printf("자식 프로세스가 클라이언트와 연결에 성공했습니다.\n");
+}
+
+void handle_sigusr2(int sig) {
+    printf("자식 프로세스가 클라이언트와 연결에 실패했습니다.\n");
+}
+
 // 클라이언트 처리 함수 [자식 프로세스 부분]
 void handle_client(int csock, int client_index) {
     // 이 함수는 서버가 클라이언트와 성공적으로 연결을 수립한 후 호출됩니다.
@@ -55,6 +64,9 @@ void handle_client(int csock, int client_index) {
     struct message msg;
     int n;
     pid_t pid = getpid();  // 현재 프로세스의 PID 얻기
+
+    // 클라이언트와의 연결 성공 시 부모 프로세스에게 SIGUSR1 시그널 전송
+    kill(getppid(), SIGUSR1);
 
     while (1) {
         memset(msg.mesg, 0, BUFSIZ);  // 메시지 버퍼 초기화
@@ -77,7 +89,7 @@ void handle_client(int csock, int client_index) {
         // 부모 프로세스에게 메시지 전달
         // 이 부분은 중복되는 것 같습니다. 클라이언트로부터 직접 읽은 메시지를
         // 부모 프로세스에게 다시 전달하는 것은 불필요해 보입니다.
-        // 만약 부모 프로세스가 이 정보를 필요로 한다면, 다른 방식으로 구현해야 할 것 같습니다.
+        // 만약 부모 프로세스가 이 정보�� 필요로 한다면, 다른 방식으로 구현해야 할 것 같습니다.
 
         // 부모 프로세스에게 메시지 전달
         ssize_t bytes_written = write(child_to_parent[client_index][1], &msg, sizeof(msg));
@@ -180,6 +192,8 @@ int main(int argc, char **argv) {
 
     signal(SIGINT, handle_sigint);  // SIGINT 핸들러 등록
     signal(SIGCHLD, handle_sigchld);  // SIGCHLD 핸들러 등록    
+    signal(SIGUSR1, handle_sigusr1); // SIGUSR1 핸들러 등록
+    signal(SIGUSR2, handle_sigusr2); // SIGUSR2 핸들러 등록
 
     printf("서버가 시작되었습니다. 포트 %d에서 대기 중...\n", TCP_PORT);
     printf("서버를 종료하려면 Ctrl+C를 누르세요.\n");
@@ -250,7 +264,7 @@ int main(int argc, char **argv) {
             // 따라서 이 시점에서 cliaddr은 현재 연결된 클라이언트의 정보를 담고 있습니다.
             //----------------------------------------------------------------------
             // inet_ntoa(cliaddr.sin_addr)는 클라이언트의 IP 주소를 문자열로 변환합니다.
-            // cliaddr는 클라이언트의 주소 정보를 담고 있는 구조체입니다.
+            // cliaddr은 클라이언트의 주소 정보를 담고 있는 구조체입니다.
             // sin_addr는 이 구조체 내의 IP 주소 필드입니다.
             // inet_ntoa 함수는 이 IP 주소를 점으로 구분된 십진수 표기법(예: "192.168.0.1")으로 변환합니다.
             handle_client(csock, client_count); // [자식 프로세스 부분]
